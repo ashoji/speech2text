@@ -80,17 +80,63 @@ dotnet run "<音声ファイルパス>"
 #### 本番環境での実行（推奨）
 
 ```powershell
-# 本番用にビルドして発行
-dotnet publish -c Release -o ./publish
+# 本番用にビルドして発行（ランタイム含む、推奨）
+dotnet publish speech2text.csproj -c Release -r win-x64 --self-contained true -o ./publish
+
+# 本番用にビルドして発行（軽量版、.NET 8.0 Runtime必要）
+dotnet publish speech2text.csproj -c Release -r win-x64 --self-contained false -o ./publish-lightweight
 
 # 発行されたexeファイルを実行
 ./publish/speech2text.exe "<音声ファイルパス>"
 ```
 
-**`dotnet publish`の利点:**
-- 必要なランタイムやライブラリがすべて含まれた自己完結型の実行ファイルが作成されます
-- .NET Runtimeがインストールされていない環境でも実行可能です
-- 配布やデプロイメントが簡単になります
+#### 配布用ZIPファイルの作成
+
+```powershell
+# publishフォルダを作成
+New-Item -ItemType Directory -Force -Path ./publish
+
+# ランタイム含む版のZIPを作成
+dotnet publish speech2text.csproj -c Release -r win-x64 --self-contained true -o ./publish/standalone
+# 実際のappsettings.jsonではなく、テンプレートをappsettings.jsonとしてコピー
+Copy-Item appsettings.template.json ./publish/standalone/appsettings.json -Force
+Copy-Item README.md ./publish/standalone/
+Compress-Archive -Path ./publish/standalone/* -DestinationPath ./publish/speech2text-standalone.zip
+
+# 軽量版のZIPを作成
+dotnet publish speech2text.csproj -c Release -r win-x64 --self-contained false -o ./publish/lightweight
+# 実際のappsettings.jsonではなく、テンプレートをappsettings.jsonとしてコピー
+Copy-Item appsettings.template.json ./publish/lightweight/appsettings.json -Force
+Copy-Item README.md ./publish/lightweight/
+Compress-Archive -Path ./publish/lightweight/* -DestinationPath ./publish/speech2text-lightweight.zip
+
+# 完全版のZIP作成（バージョン付き）
+Copy-Item appsettings.template.json ./publish/standalone/appsettings.json -Force
+Copy-Item README.md ./publish/standalone/
+Compress-Archive -Path ./publish/standalone/* -DestinationPath ./publish/speech2text-v1.0.0-win-x64-standalone.zip -Force
+```
+
+**Linux/macOS環境での場合:**
+```bash
+# ZIPファイル作成（Linux/macOS）
+mkdir -p ./publish
+dotnet publish speech2text.csproj -c Release -r win-x64 --self-contained true -o ./publish/standalone
+cp appsettings.template.json ./publish/standalone/appsettings.json
+cp README.md ./publish/standalone/
+cd ./publish && zip -r speech2text-v1.0.0-win-x64-standalone.zip ./standalone/*
+```
+
+**`dotnet publish`の選択肢:**
+
+1. **Self-contained（推奨）**: 
+   - .NET Runtimeが含まれ、どの環境でもすぐに実行可能
+   - ファイルサイズ: 約100-150MB
+   - 企業環境での配布に最適
+
+2. **Framework-dependent（軽量版）**: 
+   - .NET 8.0 Runtimeが事前にインストールされている必要
+   - ファイルサイズ: 約5-10MB
+   - 開発者向けまたはランタイムが既にある環境向け
 
 ## 使用方法
 
@@ -105,6 +151,8 @@ dotnet run "C:\audio\customer_call.wav"
 # 例
 ./publish/speech2text.exe "C:\audio\customer_call.wav"
 ```
+
+**重要**: 配布されたファイルには、テンプレートの`appsettings.json`が含まれています。使用前に実際のAzureの設定値を入力してください。
 
 ### サポートされる音声ファイル形式
 
@@ -152,3 +200,38 @@ AI分析では以下の項目を出力します：
 ## ライセンス
 
 このプロジェクトはMITライセンスの下で公開されています。
+
+## GitHub Release作成手順
+
+開発者向けのリリース作成手順：
+
+```powershell
+# 1. バージョンを決定（例：v1.0.0）
+$version = "v1.0.0"
+
+# 2. publishフォルダを作成
+New-Item -ItemType Directory -Force -Path ./publish
+
+# 3. ランタイム含む版をビルド
+dotnet publish speech2text.csproj -c Release -r win-x64 --self-contained true -o ./publish/standalone
+# 実際のappsettings.jsonではなく、テンプレートをappsettings.jsonとしてコピー
+Copy-Item appsettings.template.json ./publish/standalone/appsettings.json -Force
+Copy-Item README.md ./publish/standalone/
+
+# 4. 軽量版をビルド
+dotnet publish speech2text.csproj -c Release -r win-x64 --self-contained false -o ./publish/lightweight
+# 実際のappsettings.jsonではなく、テンプレートをappsettings.jsonとしてコピー
+Copy-Item appsettings.template.json ./publish/lightweight/appsettings.json -Force
+Copy-Item README.md ./publish/lightweight/
+
+# 5. ZIPファイルを作成
+Compress-Archive -Path ./publish/standalone/* -DestinationPath "./publish/speech2text-$version-win-x64-standalone.zip" -Force
+Compress-Archive -Path ./publish/lightweight/* -DestinationPath "./publish/speech2text-$version-win-x64-lightweight.zip" -Force
+
+# 6. GitHubでタグを作成してReleaseページでZIPファイルをアップロード
+```
+
+### リリースファイル構成
+作成されるファイル（`./publish/`フォルダ内）:
+- `speech2text-v1.0.0-win-x64-standalone.zip` - ランタイム含む（推奨）
+- `speech2text-v1.0.0-win-x64-lightweight.zip` - 軽量版（.NET 8.0必要）
