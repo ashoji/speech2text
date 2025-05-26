@@ -49,6 +49,12 @@ Copy-Item appsettings.template.json appsettings.json
       "ApiKey": "YOUR_OPENAI_API_KEY",
       "DeploymentName": "YOUR_DEPLOYMENT_NAME"
     }
+  },
+  "AI": {
+    "Prompts": {
+      "SystemPrompt": "あなたはコールセンターでの顧客対応を分析する専門アシスタントです。...",
+      "UserPromptTemplate": "あなたは、コールセンターのオペレーターです。以下の顧客からの問い合わせ通話内容を分析してください：\n\n{0}"
+    }
   }
 }
 ```
@@ -57,8 +63,11 @@ Copy-Item appsettings.template.json appsettings.json
 - Endpointは、ベースURLのみを指定してください（`/openai/deployments/...`は含めない）
 - DeploymentNameは、Azure OpenAIでデプロイしたモデルの名前を指定してください
 - `appsettings.json`は機密情報を含むため、Gitにコミットされません
+- SystemPromptとUserPromptTemplateは、AI分析の動作をカスタマイズできます
 
 ### 3. ビルドと実行
+
+#### 開発環境での実行
 
 ```powershell
 # プロジェクトをビルド
@@ -68,11 +77,33 @@ dotnet build
 dotnet run "<音声ファイルパス>"
 ```
 
+#### 本番環境での実行（推奨）
+
+```powershell
+# 本番用にビルドして発行
+dotnet publish -c Release -o ./publish
+
+# 発行されたexeファイルを実行
+./publish/speech2text.exe "<音声ファイルパス>"
+```
+
+**`dotnet publish`の利点:**
+- 必要なランタイムやライブラリがすべて含まれた自己完結型の実行ファイルが作成されます
+- .NET Runtimeがインストールされていない環境でも実行可能です
+- 配布やデプロイメントが簡単になります
+
 ## 使用方法
 
+#### 開発環境での実行
 ```powershell
 # 例
 dotnet run "C:\audio\customer_call.wav"
+```
+
+#### 本番環境での実行（推奨）
+```powershell
+# 例
+./publish/speech2text.exe "C:\audio\customer_call.wav"
 ```
 
 ### サポートされる音声ファイル形式
@@ -94,6 +125,15 @@ AI分析では以下の項目を出力します：
 - **お客様の感情**: 感情の状態と具体的な理由
 - **次のアクション**: 対応担当者が取るべき具体的な行動
 - **重要なポイント**: 特に注意すべき点やお客様の要望
+
+### AIプロンプトのカスタマイズ
+
+`appsettings.json`の`AI.Prompts`セクションでAI分析の動作をカスタマイズできます：
+
+- **SystemPrompt**: AIの役割と出力フォーマットを定義
+- **UserPromptTemplate**: 分析対象のテキストをAIに渡す際のテンプレート（`{0}`が文字起こし結果に置き換えられます）
+
+例えば、より詳細な感情分析や、特定の業界向けの分析を行いたい場合は、これらのプロンプトを編集してください。
 
 ## トラブルシューティング
 

@@ -91,10 +91,17 @@ class Program
         var endpoint = _configuration?["Azure:OpenAI:Endpoint"];
         var apiKey = _configuration?["Azure:OpenAI:ApiKey"];
         var deploymentName = _configuration?["Azure:OpenAI:DeploymentName"];
+        var systemPrompt = _configuration?["AI:Prompts:SystemPrompt"];
+        var userPromptTemplate = _configuration?["AI:Prompts:UserPromptTemplate"];
 
         if (string.IsNullOrEmpty(endpoint) || string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(deploymentName))
         {
             throw new InvalidOperationException("Azure OpenAIの設定が不正です。appsettings.jsonを確認してください。");
+        }
+
+        if (string.IsNullOrEmpty(systemPrompt) || string.IsNullOrEmpty(userPromptTemplate))
+        {
+            throw new InvalidOperationException("AIプロンプトの設定が不正です。appsettings.jsonを確認してください。");
         }
 
         // エンドポイントからベースURLを抽出
@@ -104,31 +111,12 @@ class Program
         
         var requestUrl = $"{baseEndpoint}/openai/deployments/{deploymentName}/chat/completions?api-version=2024-02-15-preview";
 
-        string systemPrompt = @"あなたはコールセンターでの顧客対応を分析する専門アシスタントです。
-以下の通話内容を分析し、以下の形式で回答してください：
-
-【要約】
-通話内容の要約
-
-【お客様の感情】
-- 感情の状態（満足・不満・怒り・困惑など）
-- 具体的な理由
-
-【次のアクション】
-- 対応担当者が取るべき具体的な行動
-- フォローアップの必要性
-- エスカレーションの必要性
-
-【重要なポイント】
-- 特に注意すべき点
-- お客様の要望や懸念";
-
         var requestBody = new
         {
             messages = new[]
             {
                 new { role = "system", content = systemPrompt },
-                new { role = "user", content = $"あなたは、コールセンターのオペレーターです。以下の顧客からの問い合わせ通話内容を分析してください：\n\n{transcriptionText}" }
+                new { role = "user", content = string.Format(userPromptTemplate, transcriptionText) }
             },
             max_tokens = 1000,
             temperature = 0.3
