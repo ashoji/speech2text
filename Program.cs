@@ -1,5 +1,6 @@
 ﻿using Microsoft.CognitiveServices.Speech;
 using Microsoft.CognitiveServices.Speech.Audio;
+using Microsoft.CognitiveServices.Speech.Transcription;
 using Microsoft.Extensions.Configuration;
 using System.Text;
 using System.Text.Json;
@@ -59,9 +60,7 @@ class Program
         {
             Console.WriteLine($"エラーが発生しました: {ex.Message}");
         }
-    }
-
-    static async Task<string> TranscribeAudioAsync(string audioFilePath)
+    }    static async Task<string> TranscribeAudioAsync(string audioFilePath)
     {
         var speechKey = _configuration?["Azure:SpeechService:SubscriptionKey"];
         var speechRegion = _configuration?["Azure:SpeechService:Region"];
@@ -71,22 +70,154 @@ class Program
             throw new InvalidOperationException("Azure Speech Serviceの設定が不正です。appsettings.jsonを確認してください。");
         }
 
+        try
+        {
+            // 最初に話者認識付きで試行
+            return await TranscribeWithSpeakerDiarizationAsync(audioFilePath, speechKey, speechRegion);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"話者認識エラー: {ex.Message}");
+            Console.WriteLine("話者認識なしの通常認識で再試行します...");
+            return await TranscribeAudioWithoutSpeakerAsync(audioFilePath);
+        }    }
+
+    static async Task<string> TranscribeWithSpeakerDiarizationAsync(string audioFilePath, string speechKey, string speechRegion)
+    {
         var speechConfig = SpeechConfig.FromSubscription(speechKey, speechRegion);
+        speechConfig.SpeechRecognitionLanguage = "ja-JP";
+        
+        // 話者認識のために中間結果を有効化
+        speechConfig.SetProperty(PropertyId.SpeechServiceResponse_DiarizeIntermediateResults, "true");
+
+        using var audioConfig = AudioConfig.FromWavFileInput(audioFilePath);
+        using var conversationTranscriber = new ConversationTranscriber(speechConfig, audioConfig);
+
+        var allText = new StringBuilder();
+        var tcs = new TaskCompletionSource<bool>();
+        var speakerMap = new Dictionary<string, int>();
+        var nextSpeakerId = 1;        // 話者認識付き文字起こしのイベントハンドラを設定
+        conversationTranscriber.Transcribing += (s, e) =>
+        {
+            // 認識中の進捗は出力しない（サイレント処理）
+        };
+
+        conversationTranscriber.Transcribed += (s, e) =>
+        {
+            if (e.Result.Reason == ResultReason.RecognizedSpeech && !string.IsNullOrEmpty(e.Result.Text))
+            {
+                var timestamp = TimeSpan.FromTicks(e.Result.OffsetInTicks).ToString(@"mm\:ss");
+                
+                // 話者情報を整理
+                string speakerInfo = "";
+                var speakerId = e.Result.SpeakerId;
+                if (!string.IsNullOrEmpty(speakerId) && speakerId != "Unknown")
+                {
+                    if (!speakerMap.ContainsKey(speakerId))
+                    {
+                        speakerMap[speakerId] = nextSpeakerId++;
+                    }
+                    speakerInfo = $"話者{speakerMap[speakerId]}: ";
+                }
+                else if (!string.IsNullOrEmpty(speakerId))
+                {
+                    speakerInfo = $"{speakerId}: ";
+                }                
+                var formattedText = $"[{timestamp}] {speakerInfo}{e.Result.Text}";
+                allText.AppendLine(formattedText);
+                Console.WriteLine(formattedText);
+            }
+            else if (e.Result.Reason == ResultReason.NoMatch)
+            {
+                Console.WriteLine("NOMATCH: 音声を認識できませんでした。");
+            }
+        };
+
+        conversationTranscriber.Canceled += (s, e) =>
+        {
+            Console.WriteLine($"話者認識がキャンセルされました: {e.Reason}");
+            if (e.Reason == CancellationReason.Error)
+            {
+                Console.WriteLine($"エラー詳細: {e.ErrorDetails}");
+                tcs.SetException(new Exception($"話者認識エラー: {e.ErrorDetails}"));
+            }
+            else
+            {
+                tcs.SetResult(true);
+            }
+        };
+
+        conversationTranscriber.SessionStopped += (s, e) =>
+        {
+            Console.WriteLine("話者認識セッションが終了しました。");
+            tcs.SetResult(true);
+        };
+
+        // 話者認識付き文字起こしを開始
+        await conversationTranscriber.StartTranscribingAsync();
+
+        // 認識が完了するまで待機
+        await tcs.Task;
+
+        // 認識を停止
+        await conversationTranscriber.StopTranscribingAsync();
+
+        var result = allText.ToString().Trim();
+        return string.IsNullOrEmpty(result) ? "音声を認識できませんでした。" : result;
+    }
+
+    // フォールバック用の通常の音声認識メソッド
+    static async Task<string> TranscribeAudioWithoutSpeakerAsync(string audioFilePath)
+    {
+        var speechKey = _configuration?["Azure:SpeechService:SubscriptionKey"];
+        var speechRegion = _configuration?["Azure:SpeechService:Region"];
+
+        var speechConfig = SpeechConfig.FromSubscription(speechKey!, speechRegion!);
         speechConfig.SpeechRecognitionLanguage = "ja-JP";
 
         using var audioConfig = AudioConfig.FromWavFileInput(audioFilePath);
         using var speechRecognizer = new SpeechRecognizer(speechConfig, audioConfig);
 
-        var result = await speechRecognizer.RecognizeOnceAsync();
-
-        return result.Reason switch
+        var allText = new StringBuilder();
+        var tcs = new TaskCompletionSource<bool>();        speechRecognizer.Recognized += (s, e) =>
         {
-            ResultReason.RecognizedSpeech => result.Text,
-            ResultReason.NoMatch => "音声を認識できませんでした。",
-            ResultReason.Canceled => throw new Exception($"音声認識がキャンセルされました: {CancellationDetails.FromResult(result).ErrorDetails}"),
-            _ => throw new Exception("音声認識に失敗しました。")
+            if (e.Result.Reason == ResultReason.RecognizedSpeech && !string.IsNullOrEmpty(e.Result.Text))
+            {
+                var timestamp = TimeSpan.FromTicks(e.Result.OffsetInTicks).ToString(@"mm\:ss");
+                var formattedText = $"[{timestamp}] {e.Result.Text}";
+                
+                allText.AppendLine(formattedText);
+                Console.WriteLine(formattedText);
+            }
         };
-    }    static async Task<string> AnalyzeWithOpenAIAsync(string transcriptionText)
+
+        speechRecognizer.SessionStopped += (s, e) =>
+        {
+            Console.WriteLine("音声認識セッションが終了しました。");
+            tcs.SetResult(true);
+        };
+
+        speechRecognizer.Canceled += (s, e) =>
+        {
+            Console.WriteLine($"音声認識がキャンセルされました: {e.Reason}");
+            if (e.Reason == CancellationReason.Error)
+            {
+                Console.WriteLine($"エラー詳細: {e.ErrorDetails}");
+                tcs.SetException(new Exception($"音声認識エラー: {e.ErrorDetails}"));
+            }
+            else
+            {
+                tcs.SetResult(true);
+            }
+        };
+
+        await speechRecognizer.StartContinuousRecognitionAsync();
+        await tcs.Task;
+        await speechRecognizer.StopContinuousRecognitionAsync();
+
+        var result = allText.ToString().Trim();
+        return string.IsNullOrEmpty(result) ? "音声を認識できませんでした。" : result;
+    }static async Task<string> AnalyzeWithOpenAIAsync(string transcriptionText)
     {
         var endpoint = _configuration?["Azure:OpenAI:Endpoint"];
         var apiKey = _configuration?["Azure:OpenAI:ApiKey"];
